@@ -53,7 +53,7 @@
             const [isLoading, setIsLoading] = useState(true);
             const [selectedAsset, setSelectedAsset] = useState(null);
 
-            // A single useEffect hook to handle both auth state and data fetching.
+            // A single useEffect hook to handle all Firebase initialization and data fetching.
             useEffect(() => {
                 let unsubscribeAuth = () => {};
                 let unsubscribeFirestore = () => {};
