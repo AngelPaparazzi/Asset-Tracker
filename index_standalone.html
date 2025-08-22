@@ -1,0 +1,477 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Asset Tracker</title>
+    <!-- Tailwind CSS CDN for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+        }
+    </style>
+</head>
+<body class="bg-gray-100">
+
+    <div id="root"></div>
+
+    <!-- Firebase SDKs - Loaded via CDN (Older, compatible version) -->
+    <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-app.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-auth.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/8.6.8/firebase-firestore.js"></script>
+
+    <!-- React and ReactDOM SDKs - Loaded via CDN -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- Asset Tracker Application Script -->
+    <script type="text/babel">
+        // Import React Hooks from the global React object
+        const { useState, useEffect } = React;
+
+        // Main App Component
+        const App = () => {
+            // State variables for the app
+            const [db, setDb] = useState(null);
+            const [auth, setAuth] = useState(null);
+            const [userId, setUserId] = useState('');
+            const [assets, setAssets] = useState([]);
+            const [formData, setFormData] = useState({
+                serialNumber: '',
+                deviceName: '',
+                itemType: '',
+                checkedOutTo: '',
+                checkedOutDate: '',
+                checkedInDate: '',
+                notes: ''
+            });
+            const [searchTerm, setSearchTerm] = useState('');
+            const [isEditing, setIsEditing] = useState(false);
+            const [currentAssetId, setCurrentAssetId] = useState(null);
+            const [isLoading, setIsLoading] = useState(true);
+            const [selectedAsset, setSelectedAsset] = useState(null);
+
+            // A single useEffect hook to handle both auth state and data fetching.
+            useEffect(() => {
+                let unsubscribeAuth = () => {};
+                let unsubscribeFirestore = () => {};
+
+                const setupFirebase = async () => {
+                    try {
+                        // Firebase configuration with your provided values
+                        const firebaseConfig = {
+                          apiKey: "AIzaSyAPEIOFXekvfx5FI6tXJUvW5WzlT6j2ezA",
+                          authDomain: "tracker-ddd6c.firebaseapp.com",
+                          projectId: "tracker-ddd6c",
+                          storageBucket: "tracker-ddd6c.firebasestorage.app",
+                          messagingSenderId: "772606263004",
+                          appId: "1:772606263004:web:21880a4f39da407c58be19"
+                        };
+
+                        const app = firebase.initializeApp(firebaseConfig);
+                        const firestore = firebase.firestore();
+                        const authService = firebase.auth();
+
+                        setDb(firestore);
+                        setAuth(authService);
+
+                        await authService.signInAnonymously();
+
+                        unsubscribeAuth = authService.onAuthStateChanged((user) => {
+                            if (user) {
+                                setUserId(user.uid);
+
+                                const q = firestore.collection(`user-data/${user.uid}/assets`);
+
+                                unsubscribeFirestore = q.onSnapshot((snapshot) => {
+                                    const assetsList = snapshot.docs.map(doc => ({
+                                        id: doc.id,
+                                        ...doc.data()
+                                    }));
+                                    assetsList.sort((a, b) => new Date(b.checkedOutDate) - new Date(a.checkedOutDate));
+                                    setAssets(assetsList);
+                                    setIsLoading(false);
+                                }, (error) => {
+                                    console.error("Error fetching assets:", error);
+                                    setIsLoading(false);
+                                });
+                            } else {
+                                setUserId('');
+                                setAssets([]);
+                                setIsLoading(false);
+                            }
+                        });
+                    } catch (error) {
+                        console.error("Firebase initialization failed:", error);
+                        setIsLoading(false);
+                    }
+                };
+
+                setupFirebase();
+
+                return () => {
+                    unsubscribeAuth();
+                    unsubscribeFirestore();
+                };
+
+            }, []);
+
+            const handleInputChange = (e) => {
+                const { name, value } = e.target;
+                setFormData(prev => ({ ...prev, [name]: value }));
+            };
+
+            const handleFormSubmit = async (e) => {
+                e.preventDefault();
+                if (!db || !userId) {
+                     alert("App is not connected to Firebase. Please check your configuration.");
+                     return;
+                }
+
+                try {
+                    const assetData = {
+                        serialNumber: formData.serialNumber,
+                        deviceName: formData.deviceName,
+                        itemType: formData.itemType,
+                        checkedOutTo: formData.checkedOutTo,
+                        checkedOutDate: formData.checkedOutDate,
+                        checkedInDate: formData.checkedInDate,
+                        notes: formData.notes
+                    };
+
+                    const assetCollectionPath = `user-data/${userId}/assets`;
+
+                    if (isEditing) {
+                        await db.collection(assetCollectionPath).doc(currentAssetId).update(assetData);
+                        setIsEditing(false);
+                        setCurrentAssetId(null);
+                    } else {
+                        await db.collection(assetCollectionPath).doc(formData.serialNumber).set(assetData);
+                    }
+                    setFormData({ serialNumber: '', deviceName: '', itemType: '', checkedOutTo: '', checkedOutDate: '', checkedInDate: '', notes: '' });
+                } catch (error) {
+                    console.error("Error adding/updating asset:", error);
+                    alert("Failed to save asset. Check the console for more details.");
+                }
+            };
+
+            const handleEditClick = (asset) => {
+                setFormData({
+                    serialNumber: asset.serialNumber,
+                    deviceName: asset.deviceName,
+                    itemType: asset.itemType,
+                    checkedOutTo: asset.checkedOutTo,
+                    checkedOutDate: asset.checkedOutDate,
+                    checkedInDate: asset.checkedInDate,
+                    notes: asset.notes
+                });
+                setIsEditing(true);
+                setCurrentAssetId(asset.id);
+            };
+
+            const handleDeleteClick = async (assetId) => {
+                if (!db || !userId) return;
+
+                const confirmed = window.confirm("Are you sure you want to delete this asset?");
+                if (confirmed) {
+                    try {
+                        const assetCollectionPath = `user-data/${userId}/assets`;
+                        await db.collection(assetCollectionPath).doc(assetId).delete();
+                    } catch (error) {
+                        console.error("Error deleting asset:", error);
+                        alert("Failed to delete asset. Check the console for more details.");
+                    }
+                }
+            };
+
+            const handleAssetClick = (asset) => {
+                setSelectedAsset(asset);
+            };
+
+            const handleCloseModal = () => {
+                setSelectedAsset(null);
+            };
+
+            const filteredAssets = assets.filter(asset =>
+                asset.serialNumber.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                asset.deviceName.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                asset.checkedOutTo.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                (asset.notes && asset.notes.toLowerCase().includes(searchTerm.toLowerCase()))
+            );
+
+            return (
+                <div className="min-h-screen bg-[#FEE2E9] p-8 font-sans antialiased flex flex-col items-center">
+                    <header className="w-full max-w-4xl text-center mb-8">
+                        <h1 className="text-4xl font-bold text-[#2A2A2A] mb-2">Asset Tracker</h1>
+                        <p className="text-[#2A2A2A] mt-2">
+                            Add, edit, and track your assets. All data is saved automatically.
+                        </p>
+                    </header>
+                    <main className="w-full max-w-4xl bg-white p-6 rounded-lg shadow-md">
+                        <form onSubmit={handleFormSubmit} className="mb-8">
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                <div>
+                                    <label htmlFor="serialNumber" className="block text-sm font-medium text-[#2A2A2A]">Serial Barcode (SKU)</label>
+                                    <input
+                                        type="text"
+                                        id="serialNumber"
+                                        name="serialNumber"
+                                        value={formData.serialNumber}
+                                        onChange={handleInputChange}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                        placeholder="e.g., LAPTOP-12345"
+                                        required
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="deviceName" className="block text-sm font-medium text-[#2A2A2A]">Device Name</label>
+                                    <input
+                                        type="text"
+                                        id="deviceName"
+                                        name="deviceName"
+                                        value={formData.deviceName}
+                                        onChange={handleInputChange}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                        required
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="itemType" className="block text-sm font-medium text-[#2A2A2A]">Item Type</label>
+                                    <input
+                                        type="text"
+                                        id="itemType"
+                                        name="itemType"
+                                        value={formData.itemType}
+                                        onChange={handleInputChange}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                        placeholder="e.g., Laptop, Monitor, Mouse"
+                                        required
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="checkedOutTo" className="block text-sm font-medium text-[#2A2A2A]">Checked Out To</label>
+                                    <input
+                                        type="text"
+                                        id="checkedOutTo"
+                                        name="checkedOutTo"
+                                        value={formData.checkedOutTo}
+                                        onChange={handleInputChange}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                        placeholder="e.g., John Doe"
+                                        required
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="checkedOutDate" className="block text-sm font-medium text-[#2A2A2A]">Date Checked Out</label>
+                                    <input
+                                        type="date"
+                                        id="checkedOutDate"
+                                        name="checkedOutDate"
+                                        value={formData.checkedOutDate}
+                                        onChange={handleInputChange}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                        required
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                <div>
+                                    <label htmlFor="checkedInDate" className="block text-sm font-medium text-[#2A2A2A]">Date Checked In</label>
+                                    <input
+                                        type="date"
+                                        id="checkedInDate"
+                                        name="checkedInDate"
+                                        value={formData.checkedInDate}
+                                        onChange={handleInputChange}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                        disabled={isLoading}
+                                    />
+                                </div>
+                                <div className="md:col-span-2">
+                                    <label htmlFor="notes" className="block text-sm font-medium text-[#2A2A2A]">Notes/Description</label>
+                                    <textarea
+                                        id="notes"
+                                        name="notes"
+                                        rows="3"
+                                        value={formData.notes}
+                                        onChange={handleInputChange}
+                                        className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                        placeholder="Add any additional notes about the asset..."
+                                        disabled={isLoading}
+                                    ></textarea>
+                                </div>
+                            </div>
+                            <div className="mt-6 flex justify-end space-x-4">
+                                <button
+                                    type="submit"
+                                    className="inline-flex justify-center py-2 px-4 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#D946EF] disabled:opacity-50"
+                                    disabled={isLoading}
+                                >
+                                    {isEditing ? 'Update Asset' : 'Add Asset'}
+                                </button>
+                                {isEditing && (
+                                    <button
+                                        type="button"
+                                        onClick={() => {
+                                            setIsEditing(false);
+                                            setCurrentAssetId(null);
+                                            setFormData({ serialNumber: '', deviceName: '', itemType: '', checkedOutTo: '', checkedOutDate: '', checkedInDate: '', notes: '' });
+                                        }}
+                                        className="inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-[#D946EF] disabled:opacity-50"
+                                        disabled={isLoading}
+                                    >
+                                        Cancel
+                                    </button>
+                                )}
+                            </div>
+                        </form>
+                        <hr className="my-8" />
+                        <div className="flex flex-col md:flex-row justify-between items-center mb-6">
+                            <h2 className="text-2xl font-semibold text-[#2A2A2A] mb-4 md:mb-0">Tracked Assets</h2>
+                            <input
+                                type="text"
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full md:w-1/2 rounded-md border-gray-300 shadow-sm focus:border-[#D946EF] focus:ring-[#D946EF]"
+                                placeholder="Search by serial number, device name, or person"
+                            />
+                        </div>
+                        {isLoading && (
+                            <div className="text-center text-[#2A2A2A] p-8">Loading assets...</div>
+                        )}
+                        {!isLoading && (
+                            <div className="overflow-x-auto">
+                                <table className="min-w-full divide-y divide-gray-200">
+                                    <thead className="bg-[#D946EF]">
+                                        <tr>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                                Serial Number
+                                            </th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                                Device Name
+                                            </th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                                Item Type
+                                            </th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                                Checked Out To
+                                            </th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                                Date
+                                            </th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                                Check-in Date
+                                            </th>
+                                            <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-white uppercase tracking-wider">
+                                                Notes
+                                            </th>
+                                            <th scope="col" className="relative px-6 py-3">
+                                                <span className="sr-only">Actions</span>
+                                            </th>
+                                        </tr>
+                                    </thead>
+                                    <tbody className="bg-white divide-y divide-gray-200">
+                                        {filteredAssets.length === 0 ? (
+                                            <tr>
+                                                <td colSpan="8" className="px-6 py-4 text-center text-gray-500">No assets found.</td>
+                                            </tr>
+                                        ) : (
+                                            filteredAssets.map((asset) => (
+                                                <tr key={asset.id} className="hover:bg-gray-100 cursor-pointer" onClick={() => handleAssetClick(asset)}>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                                                        {asset.serialNumber}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {asset.deviceName}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {asset.itemType}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {asset.checkedOutTo}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {asset.checkedOutDate}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                                                        {asset.checkedInDate}
+                                                    </td>
+                                                    <td className="px-6 py-4 text-sm text-gray-500 max-w-xs truncate">
+                                                        {asset.notes}
+                                                    </td>
+                                                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleEditClick(asset); }}
+                                                            className="text-indigo-600 hover:text-indigo-900 mr-4"
+                                                        >
+                                                            Edit
+                                                        </button>
+                                                        <button
+                                                            onClick={(e) => { e.stopPropagation(); handleDeleteClick(asset.id); }}
+                                                            className="text-red-600 hover:text-red-900"
+                                                        >
+                                                            Delete
+                                                        </button>
+                                                    </td>
+                                                </tr>
+                                            ))
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>
+                        )}
+                    </main>
+                    {selectedAsset && (
+                         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black bg-opacity-50">
+                            <div className="bg-white p-8 rounded-lg shadow-xl w-full max-w-2xl">
+                                <h2 className="text-3xl font-bold text-gray-800 mb-4">{selectedAsset.deviceName}</h2>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-500">Serial Number (SKU)</p>
+                                        <p className="mt-1 text-gray-900">{selectedAsset.serialNumber}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-500">Item Type</p>
+                                        <p className="mt-1 text-gray-900">{selectedAsset.itemType}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-500">Checked Out To</p>
+                                        <p className="mt-1 text-gray-900">{selectedAsset.checkedOutTo}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-500">Checked Out Date</p>
+                                        <p className="mt-1 text-gray-900">{selectedAsset.checkedOutDate}</p>
+                                    </div>
+                                    <div>
+                                        <p className="text-sm font-medium text-gray-500">Check-in Date</p>
+                                        <p className="mt-1 text-gray-900">{selectedAsset.checkedInDate}</p>
+                                    </div>
+                                    <div className="md:col-span-2">
+                                        <p className="text-sm font-medium text-gray-500">Notes/Description</p>
+                                        <div className="mt-1 p-4 bg-gray-50 rounded-md border border-gray-200 whitespace-pre-wrap">
+                                            {selectedAsset.notes || 'No notes available.'}
+                                        </div>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={handleCloseModal}
+                                    className="mt-4 inline-flex justify-center py-2 px-4 border border-gray-300 shadow-sm text-sm font-medium rounded-md text-gray-700 bg-white hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500"
+                                >
+                                    Close
+                                </button>
+                            </div>
+                         </div>
+                    )}
+                </div>
+            );
+        };
+
+        ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    </script>
+</body>
+</html>
